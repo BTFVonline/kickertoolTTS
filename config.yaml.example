@@ -1,0 +1,26 @@
+# API & Turnier
+api_token: "PUT_YOUR_API_TOKEN_HERE"
+tournament_id: "PUT_YOUR_TOURNAMENT_ID_HERE"
+
+# Abfrageintervall (Sekunden)
+poll_interval: 1
+
+# Sprachausgabe
+tts:
+  provider: "piper"           # "piper" oder "pyttsx3"
+  # Piper-Optionen (nur relevant wenn provider == "piper")
+  model_path: "voices/de_DE-thorsten-medium.onnx"
+  speaker: null               # z.B. 0 oder null
+  length_scale: 0.95
+  noise_scale: 0.5
+  noise_w: 0.8
+
+  # pyttsx3-Optionen (nur relevant wenn provider == "pyttsx3")
+  rate: 170
+  volume: 1.0
+  voice_index: null
+
+# Debug / Dateien
+files:
+  save_audio: false           # WAVs dauerhaft speichern? (default: false = nur temporär)
+  write_announcement_files: false  # Text-Dateien in data/<tournament>/announcements schreiben

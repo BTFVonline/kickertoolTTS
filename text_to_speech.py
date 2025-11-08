@@ -4,33 +4,45 @@ import shutil
 import subprocess
 import tempfile
 import unicodedata
+import yaml
 from pathlib import Path
 
-# Optional: pyttsx3 Fallback
-try:
-    import pyttsx3
-except ImportError:
-    pyttsx3 = None
+# ==== CONFIG LADEN ====
+CONFIG_PATH = Path("config.yaml")
+if not CONFIG_PATH.exists():
+    raise FileNotFoundError("config.yaml fehlt! Bitte anlegen.")
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    CONFIG = yaml.safe_load(f)
 
-# ==== KONFIGURATION ====
-enable_tts = True
-use_piper = True
+TTS_CFG = CONFIG.get("tts", {})
+provider = TTS_CFG.get("provider", "piper")
+use_piper = provider.lower() == "piper"
 
+# Piper-Optionen
+piper_model_path = str(TTS_CFG.get("model_path", "voices/de_DE-thorsten-medium.onnx"))
+piper_speaker = TTS_CFG.get("speaker")
+piper_length_scale = TTS_CFG.get("length_scale", 0.95)
+piper_noise_scale = TTS_CFG.get("noise_scale", 0.5)
+piper_noise_w = TTS_CFG.get("noise_w", 0.8)
+
+# pyttsx3-Optionen
+tts_rate = TTS_CFG.get("rate", 170)
+tts_volume = TTS_CFG.get("volume", 1.0)
+tts_voice_index = TTS_CFG.get("voice_index")
+
+save_audio = CONFIG.get("files", {}).get("save_audio", False)
+
+# ==== SETUP ====
 if os.name == "nt":
     piper_executable = str(Path(".venv") / "Scripts" / "piper.exe")
 else:
     piper_executable = "piper"
 
-piper_model_path = str(Path("voices") / "de_DE-thorsten-medium.onnx")
-piper_speaker = None
-piper_length_scale = 0.95
-piper_noise_scale = 0.5
-piper_noise_w = 0.8
 
-tts_rate = 170
-tts_volume = 1.0
-tts_voice_index = None
-# ========================
+try:
+    import pyttsx3
+except ImportError:
+    pyttsx3 = None
 
 
 def _play_wav(path: str):
@@ -99,23 +111,12 @@ def _piper_say_once(text: str) -> bool:
 
         subprocess.run(cmd, input=text.encode("ansi"), check=True)
         _play_wav(wav_path)
-        os.remove(wav_path)
+        if not save_audio:
+            os.remove(wav_path)
         return True
     except Exception as e:
         print(f"[WARN] Piper Fehler: {e}")
         return False
-
-
-def _piper_say(text: str) -> bool:
-    if not use_piper:
-        return False
-    t = _normalize_text_for_tts(text)
-    if _piper_say_once(t):
-        return True
-    t2 = _umlaut_fallback(t)
-    if t2 != t:
-        return _piper_say_once(t2)
-    return False
 
 
 def _pyttsx3_say(text: str) -> bool:
@@ -140,65 +141,11 @@ def _pyttsx3_say(text: str) -> bool:
 
 
 def speak_text(text: str):
-    if not enable_tts:
-        return
-    if _piper_say(text):
-        return
+    if use_piper:
+        if _piper_say_once(text):
+            return
+        text2 = _umlaut_fallback(text)
+        if text2 != text:
+            if _piper_say_once(text2):
+                return
     _pyttsx3_say(text)
-
-
-if __name__ == "__main__":
-    import sys
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Einfaches TTS-CLI (Piper bevorzugt, pyttsx3 als Fallback)."
-    )
-    g_engine = parser.add_mutually_exclusive_group()
-    g_engine.add_argument("--piper", action="store_true", help="Piper erzwingen")
-    g_engine.add_argument("--pyttsx3", action="store_true", help="pyttsx3 erzwingen (Fallback)")
-    parser.add_argument("-t", "--text", help="Direkter Text")
-    parser.add_argument("-f", "--file", help="Text aus Datei lesen (UTF-8)")
-    parser.add_argument("--stdin", action="store_true", help="Text von STDIN lesen")
-    parser.add_argument("--rate", type=int, help="Sprechgeschwindigkeit für pyttsx3 (z. B. 170)")
-    parser.add_argument("--volume", type=float, help="Lautstärke 0.0–1.0 für pyttsx3")
-    parser.add_argument("--voice-index", type=int, help="pyttsx3 Voice-Index")
-
-    args = parser.parse_args()
-
-    # Engine-Wahl & Parameter anpassen
-    if args.piper:
-        use_piper = True
-    if args.pyttsx3:
-        use_piper = False
-    if args.rate is not None:
-        tts_rate = args.rate
-    if args.volume is not None:
-        tts_volume = args.volume
-    if args.voice_index is not None:
-        tts_voice_index = args.voice_index
-
-    # Textquelle bestimmen
-    collected = []
-    if args.text:
-        collected.append(args.text)
-    if args.file:
-        from pathlib import Path
-        p = Path(args.file)
-        if not p.exists():
-            print(f"[ERROR] Datei nicht gefunden: {p}")
-            sys.exit(2)
-        collected.append(p.read_text(encoding="utf-8"))
-    if args.stdin:
-        collected.append(sys.stdin.read())
-
-    if not collected:
-        parser.print_help()
-        sys.exit(1)
-
-    text_input = "\n".join([s.strip() for s in collected if s.strip()])
-    if not text_input:
-        print("[INFO] Kein Text nach dem Filtern.")
-        sys.exit(0)
-
-    speak_text(text_input)

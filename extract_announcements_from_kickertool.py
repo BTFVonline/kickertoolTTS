@@ -3,11 +3,19 @@ import re
 import json
 import shutil
 import requests
+import yaml
 from pathlib import Path
 
-# ==== KONFIGURATION ====
-api_token = '<YOUR_API_KEY>'
-tournament_id = '<YOUR_TOURNAMENT_ID>'
+# ==== CONFIG LADEN ====
+CONFIG_PATH = Path("config.yaml")
+if not CONFIG_PATH.exists():
+    raise FileNotFoundError("config.yaml fehlt! Bitte anlegen.")
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    CONFIG = yaml.safe_load(f)
+
+api_token = CONFIG["api_token"]
+tournament_id = CONFIG["tournament_id"]
+
 output_dir = Path("announcements")
 state_file = Path("seen_matches.json")
 
@@ -15,7 +23,6 @@ headers = {'Authorization': api_token}
 courts_url = (
     f'https://api.tournament.io/v1/public/tournaments/{tournament_id}/courts?includeMatchDetails=true'
 )
-# ========================
 
 
 def ensure_dirs():
@@ -45,7 +52,7 @@ def save_state(state):
 
 def safe_slug(s: str) -> str:
     s = (s or "").strip()
-    s = re.sub(r"[^A-Za-z0-9äöüÄÖÜß\-]+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9äöüÄÖÜß\\-]+", "_", s)
     return s[:64].strip("_") or "x"
 
 

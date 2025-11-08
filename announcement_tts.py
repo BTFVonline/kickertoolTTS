@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import time
+import yaml
 from datetime import datetime
 from pathlib import Path
 from extract_announcements_from_kickertool import (
@@ -9,14 +10,27 @@ from extract_announcements_from_kickertool import (
 )
 from text_to_speech import speak_text
 
-# ==== KONFIGURATION ====
-poll_interval = 1  # Sekunden
+# ==== CONFIG LADEN ====
+CONFIG_PATH = Path("config.yaml")
+if not CONFIG_PATH.exists():
+    raise FileNotFoundError("config.yaml fehlt! Bitte anlegen.")
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    CONFIG = yaml.safe_load(f)
+
+poll_interval = CONFIG.get("poll_interval", 1)
+write_announcement_files = CONFIG.get("files", {}).get("write_announcement_files", False)
+
 output_dir = Path("announcements")
 state_file = Path("seen_matches.json")
 # ========================
 
 
 def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: str):
+    if not write_announcement_files:
+        print(f"Tisch {tischname}: {team_a} gegen {team_b}")
+        speak_text(f"Tisch {tischname}: {team_a} gegen {team_b}")
+        return
+
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     fname = f"tisch_{safe_slug(tischname)}_{ts}_{safe_slug(match_id)}.txt"
     path = output_dir / fname
