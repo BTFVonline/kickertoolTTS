@@ -3,3 +3,4 @@
 /announcements/*
 /voices/*
 /config.yaml
+**/seen_matches.json

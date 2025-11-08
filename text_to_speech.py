@@ -20,7 +20,6 @@ except ImportError:
 # =========================
 CONFIG_PATH = Path("config.yaml")
 if not CONFIG_PATH.exists():
-    # Kein harter Abbruch: Standalone-Tests sollen auch ohne YAML gehen.
     DEFAULT_CONFIG = {}
 else:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -70,7 +69,6 @@ def _play_wav(path: str):
     else:
         for player in ["afplay", "ffplay", "aplay"]:
             if shutil.which(player):
-                # ffplay braucht -autoexit; aber wir verwenden blocking call ohne extra flags
                 subprocess.run([player, abs_path], check=False)
                 return
     print("[WARN] Konnte WAV nicht automatisch abspielen.")
@@ -78,9 +76,7 @@ def _play_wav(path: str):
 
 def _normalize_text_for_tts(text: str) -> str:
     text = unicodedata.normalize("NFC", text)
-    # „Tisch X:“ -> „Tisch X.“ hilft bei Prosodie
     text = re.sub(r"(Tisch\s+\S+):", r"\1.", text)
-    # kleine Sprechpause vor „gegen“
     text = text.replace(" gegen ", ", gegen ")
     return text
 
@@ -102,7 +98,6 @@ def _piper_say_once(text: str,
                     noise_scale=0.5,
                     noise_w=0.8,
                     keep_file=False) -> bool:
-    # Executable prüfen (venv piper.exe auf Windows bevorzugen)
     exe_path = exe
     if os.name == "nt" and not Path(exe_path).exists():
         exe_path = "piper"
@@ -131,7 +126,6 @@ def _piper_say_once(text: str,
         if speaker is not None:
             cmd += ["--speaker", str(speaker)]
 
-        # Piper verarbeitet ANSI/Latin-1 am robustesten cross-platform
         subprocess.run(cmd, input=_normalize_text_for_tts(text).encode("ansi"), check=True)
         _play_wav(wav_path)
         if not keep_file:
@@ -148,7 +142,9 @@ def _piper_say_once(text: str,
 
 
 def _pyttsx3_say(text: str, rate=170, volume=1.0, voice_index=None) -> bool:
-    if pyttsx3 is None:
+    try:
+        import pyttsx3  # sicherstellen, dass Importfehler sauber handled werden
+    except Exception:
         return False
     try:
         engine = pyttsx3.init()
@@ -169,9 +165,7 @@ def _pyttsx3_say(text: str, rate=170, volume=1.0, voice_index=None) -> bool:
 
 
 def speak_text(text: str):
-    """Öffentliche API für andere Module — nutzt aktuell konfigurierten Provider."""
-    if use_piper:
-        # Erster Versuch
+    if (TTS_CFG.get("provider") or "piper").lower() == "piper":
         if _piper_say_once(
             text=text,
             exe=piper_executable,
@@ -183,7 +177,6 @@ def speak_text(text: str):
             keep_file=save_audio,
         ):
             return
-        # Umlaut-Fallback
         text2 = _umlaut_fallback(text)
         if text2 != text:
             if _piper_say_once(
@@ -197,7 +190,6 @@ def speak_text(text: str):
                 keep_file=save_audio,
             ):
                 return
-    # Fallback pyttsx3
     _pyttsx3_say(text, rate=tts_rate, volume=tts_volume, voice_index=tts_voice_index)
 
 
@@ -212,57 +204,54 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     g_engine.add_argument("--piper", action="store_true", help="Piper erzwingen")
     g_engine.add_argument("--pyttsx3", action="store_true", help="pyttsx3 erzwingen")
 
-    # Textquellen
     p.add_argument("-t", "--text", help="Direkter Text")
     p.add_argument("-f", "--file", help="Text aus Datei lesen (UTF-8)")
     p.add_argument("--stdin", action="store_true", help="Text von STDIN lesen")
 
-    # Piper-Overrides
     p.add_argument("--model", dest="model_path", help="Piper: Pfad zum .onnx-Modell")
     p.add_argument("--speaker", type=int, help="Piper: Speaker-ID (z.B. 0)")
-    p.add_argument("--length-scale", type=float, help="Piper: length_scale (z.B. 0.95)")
-    p.add_argument("--noise-scale", type=float, help="Piper: noise_scale (z.B. 0.5)")
-    p.add_argument("--noise-w", type=float, help="Piper: noise_w (z.B. 0.8)")
+    p.add_argument("--length-scale", type=float, help="Piper: length_scale")
+    p.add_argument("--noise-scale", type=float, help="Piper: noise_scale")
+    p.add_argument("--noise-w", type=float, help="Piper: noise_w")
 
-    # pyttsx3-Overrides
-    p.add_argument("--rate", type=int, help="pyttsx3: Sprechgeschwindigkeit (z. B. 170)")
+    p.add_argument("--rate", type=int, help="pyttsx3: Sprechgeschwindigkeit")
     p.add_argument("--volume", type=float, help="pyttsx3: Lautstärke 0.0–1.0")
     p.add_argument("--voice-index", type=int, help="pyttsx3: Voice-Index")
 
-    # Dateien
-    p.add_argument("--save-audio", action="store_true", help="WAV nicht löschen (überschreibt YAML)")
-    p.add_argument("--no-save-audio", action="store_true", help="WAV nach Abspielen löschen (überschreibt YAML)")
-
+    p.add_argument("--save-audio", action="store_true", help="WAV nicht löschen")
+    p.add_argument("--no-save-audio", action="store_true", help="WAV nach Abspielen löschen")
     return p
 
 
 def _apply_overrides_from_args(args):
-    global use_piper, piper_model_path, piper_speaker, piper_length_scale, piper_noise_scale, piper_noise_w
-    global tts_rate, tts_volume, tts_voice_index, save_audio
-
+    global TTS_CFG, save_audio
+    # Provider-Override
     if args.piper:
-        use_piper = True
+        TTS_CFG["provider"] = "piper"
     if args.pyttsx3:
-        use_piper = False
+        TTS_CFG["provider"] = "pyttsx3"
 
+    # Piper
     if args.model_path is not None:
-        piper_model_path = args.model_path
+        globals()["piper_model_path"] = args.model_path
     if args.speaker is not None:
-        piper_speaker = args.speaker
+        globals()["piper_speaker"] = args.speaker
     if args.length_scale is not None:
-        piper_length_scale = args.length_scale
+        globals()["piper_length_scale"] = args.length_scale
     if args.noise_scale is not None:
-        piper_noise_scale = args.noise_scale
+        globals()["piper_noise_scale"] = args.noise_scale
     if args.noise_w is not None:
-        piper_noise_w = args.noise_w
+        globals()["piper_noise_w"] = args.noise_w
 
+    # pyttsx3
     if args.rate is not None:
-        tts_rate = args.rate
+        globals()["tts_rate"] = args.rate
     if args.volume is not None:
-        tts_volume = args.volume
+        globals()["tts_volume"] = args.volume
     if args.voice_index is not None:
-        tts_voice_index = args.voice_index
+        globals()["tts_voice_index"] = args.voice_index
 
+    # Files
     if args.save_audio:
         save_audio = True
     if args.no_save_audio:
@@ -281,8 +270,7 @@ def _collect_text_from_sources(args) -> str:
         chunks.append(p.read_text(encoding="utf-8"))
     if args.stdin:
         chunks.append(sys.stdin.read())
-    text_input = "\n".join(s.strip() for s in chunks if s and s.strip())
-    return text_input
+    return "\n".join(s.strip() for s in chunks if s and s.strip())
 
 
 if __name__ == "__main__":

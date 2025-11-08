@@ -11,13 +11,20 @@ CONFIG_PATH = Path("config.yaml")
 if not CONFIG_PATH.exists():
     raise FileNotFoundError("config.yaml fehlt! Bitte anlegen.")
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-    CONFIG = yaml.safe_load(f)
+    CONFIG = yaml.safe_load(f) or {}
 
 api_token = CONFIG["api_token"]
-tournament_id = CONFIG["tournament_id"]
+tournament_id = str(CONFIG["tournament_id"])
 
-output_dir = Path("announcements")
-state_file = Path("seen_matches.json")
+def safe_slug(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"[^A-Za-z0-9äöüÄÖÜß\-]+", "_", s)
+    return s[:64].strip("_") or "x"
+
+# Pfade pro Turnier in data/<tournament>/...
+BASE_DIR = Path("data") / safe_slug(tournament_id)
+output_dir = BASE_DIR / "announcements"
+state_file = BASE_DIR / "seen_matches.json"
 
 headers = {'Authorization': api_token}
 courts_url = (
@@ -26,8 +33,12 @@ courts_url = (
 
 
 def ensure_dirs():
-    output_dir.mkdir(parents=True, exist_ok=True)
-    Path("voices").mkdir(parents=True, exist_ok=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        Path("voices").mkdir(parents=True, exist_ok=True)
+        BASE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[ERROR] Konnte Verzeichnisse nicht anlegen: {e}")
 
 
 def load_state():
@@ -44,16 +55,11 @@ def load_state():
 
 def save_state(state):
     try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(state_file, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[WARN] Konnte State nicht speichern: {e}")
-
-
-def safe_slug(s: str) -> str:
-    s = (s or "").strip()
-    s = re.sub(r"[^A-Za-z0-9äöüÄÖÜß\\-]+", "_", s)
-    return s[:64].strip("_") or "x"
 
 
 def fetch_courts():
