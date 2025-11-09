@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import os
+import re
 import time
 import yaml
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from extract_announcements_from_kickertool import (
@@ -21,6 +24,19 @@ with open(CONFIG_PATH, "r", encoding="utf-8") as f:
 
 poll_interval = CONFIG.get("poll_interval", 1)
 write_announcement_files = CONFIG.get("files", {}).get("write_announcement_files", False)
+announcement_cfg = CONFIG.get("announcement") or {}
+default_template = "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
+speech_template = (announcement_cfg.get("speech_template") or default_template).strip()
+notify_sound_raw = (announcement_cfg.get("notify_sound") or "").strip()
+notify_sound = notify_sound_raw or None
+notify_cooldown_seconds = float(announcement_cfg.get("notify_cooldown_seconds") or 0)
+notify_sound_path = None
+if notify_sound:
+    p = Path(notify_sound)
+    if not p.is_absolute():
+        p = (CONFIG_PATH.parent / p).resolve()
+    notify_sound_path = p
+notify_sound_name = notify_sound_path.name if notify_sound_path else (Path(notify_sound).name if notify_sound else "")
 
 # ==== ASCII-LOGO ====
 ASCII_LOGO = r"""
@@ -46,12 +62,234 @@ def show_banner():
     print("-" * 100)
 
 
+def _split_player_name(name: str) -> dict:
+    name = (name or "").strip()
+    if not name:
+        return {"full": "", "first": "", "last": ""}
+
+    if "," in name:
+        last, first = [part.strip() for part in name.split(",", 1)]
+    else:
+        parts = name.split()
+        if len(parts) == 1:
+            first, last = parts[0], parts[0]
+        else:
+            first = parts[0]
+            last = parts[-1]
+
+    first = first or name
+    last = last or name
+    return {"full": name, "first": first, "last": last}
+
+
+TEMPLATE_PATTERN = re.compile(r"{([^{}]+)}")
+
+
+def _normalize_placeholder_key(raw: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", raw.strip())
+    return cleaned.upper().strip("_")
+
+
+def _add_aliases(context: dict) -> dict:
+    enriched = {}
+    for key, value in context.items():
+        if not key:
+            continue
+        variants = {
+            key,
+            key.upper(),
+            key.lower(),
+            _normalize_placeholder_key(key),
+        }
+        for variant in variants:
+            if variant:
+                enriched[variant] = value
+    return enriched
+
+
+def _build_template_context(table: str, player_a: str, player_b: str) -> dict:
+    p1 = _split_player_name(player_a)
+    p2 = _split_player_name(player_b)
+    context = {
+        "TABLE": table or "",
+        "TABLE_NAME": table or "",
+        "PLAYER1_FULL": p1["full"],
+        "PLAYER1_FULLNAME": p1["full"],
+        "PLAYER1_FIRST": p1["first"],
+        "PLAYER1_FIRSTNAME": p1["first"],
+        "PLAYER1_NAME": p1["first"],
+        "PLAYER1_SURNAME": p1["last"],
+        "PLAYER1_LASTNAME": p1["last"],
+        "PLAYER2_FULL": p2["full"],
+        "PLAYER2_FULLNAME": p2["full"],
+        "PLAYER2_FIRST": p2["first"],
+        "PLAYER2_FIRSTNAME": p2["first"],
+        "PLAYER2_NAME": p2["first"],
+        "PLAYER2_SURNAME": p2["last"],
+        "PLAYER2_LASTNAME": p2["last"],
+        "TEAM_A": player_a or "",
+        "TEAM_B": player_b or "",
+        "NOTIFY_SOUND": notify_sound_name or "",
+        "NOTIFY_SOUND_NAME": notify_sound_name or "",
+        "NOTIFY_SOUND_PATH": str(notify_sound_path) if notify_sound_path else (notify_sound or ""),
+    }
+    return _add_aliases(context)
+
+
+def _render_template(template: str, context: dict) -> str:
+    def replacer(match):
+        raw_key = match.group(1)
+        key = _normalize_placeholder_key(raw_key)
+        if not key:
+            return match.group(0)
+        return str(context.get(key, match.group(0)))
+
+    return TEMPLATE_PATTERN.sub(replacer, template)
+
+
+def format_spoken_text(table: str, player_a: str, player_b: str) -> str:
+    context = _build_template_context(table, player_a, player_b)
+    template = speech_template or default_template
+    text = _render_template(template, context).strip()
+    if text:
+        return text
+    fallback = _render_template(default_template, context).strip()
+    return fallback or default_template
+
+
+def _escape_for_powershell(value: str) -> str:
+    return value.replace("`", "``").replace('"', '`"')
+
+
+def _play_with_wmplayer(audio_path: Path) -> bool:
+    escaped = _escape_for_powershell(str(audio_path.resolve()))
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "$player = New-Object -ComObject WMPlayer.OCX.7;"
+        f"$player.URL = \"{escaped}\";"
+        "$player.controls.play();"
+        "$tries = 0;"
+        "while (((-not $player.currentMedia) -or $player.currentMedia.duration -le 0) -and $tries -lt 200) "
+        "{ Start-Sleep -Milliseconds 50; $tries++; }"
+        "$duration = 750;"
+        "if ($player.currentMedia -and $player.currentMedia.duration -gt 0) "
+        "{ $duration = [int]($player.currentMedia.duration * 1000); }"
+        "[System.Threading.Thread]::Sleep($duration);"
+        "$player.controls.stop();"
+        "$player.close();"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _play_with_system_player(audio_path: Path) -> bool:
+    commands = [
+        ["ffplay", "-autoexit", "-nodisp", "-loglevel", "quiet", str(audio_path)],
+        ["afplay", str(audio_path)],
+        ["aplay", str(audio_path)],
+        ["mpg123", str(audio_path)],
+        ["cvlc", "--play-and-exit", str(audio_path)],
+        ["play", str(audio_path)],
+    ]
+    for cmd in commands:
+        if shutil.which(cmd[0]):
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            return True
+    return False
+
+
+def _play_audio_windows(audio_path: Path) -> bool:
+    suffix = audio_path.suffix.lower()
+    if suffix == ".wav":
+        try:
+            import winsound  # type: ignore
+
+            winsound.PlaySound(str(audio_path), winsound.SND_FILENAME)
+            return True
+        except Exception:
+            pass
+    if _play_with_presentation_core(audio_path):
+        return True
+    return _play_with_wmplayer(audio_path)
+
+
+def _play_with_presentation_core(audio_path: Path) -> bool:
+    uri = audio_path.resolve().as_uri()
+    escaped_uri = _escape_for_powershell(uri)
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "Add-Type -AssemblyName PresentationCore;"
+        "$player = New-Object System.Windows.Media.MediaPlayer;"
+        f"$player.Open([Uri]\"{escaped_uri}\");"
+        "$player.Volume = 1.0;"
+        "$sw = [System.Diagnostics.Stopwatch]::StartNew();"
+        "while (-not $player.NaturalDuration.HasTimeSpan -and $sw.ElapsedMilliseconds -lt 5000) "
+        "{ Start-Sleep -Milliseconds 50; }"
+        "$duration = 750;"
+        "if ($player.NaturalDuration.HasTimeSpan) "
+        "{ $duration = [int]$player.NaturalDuration.TimeSpan.TotalMilliseconds; }"
+        "Start-Sleep -Milliseconds $duration;"
+        "$player.Stop();"
+        "$player.Close();"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
+_last_notify_play = 0.0
+
+
+def play_notification_sound():
+    global _last_notify_play
+    if not notify_sound_path:
+        return
+    now = time.monotonic()
+    if notify_cooldown_seconds > 0 and now - _last_notify_play < notify_cooldown_seconds:
+        return
+    if not notify_sound_path.is_file():
+        print(f"[WARN] Hinweiston nicht gefunden: {notify_sound_path}")
+        return
+    try:
+        if os.name == "nt":
+            played = _play_audio_windows(notify_sound_path)
+        else:
+            played = _play_with_system_player(notify_sound_path)
+        if not played:
+            print(f"[WARN] Konnte Hinweiston {notify_sound_path} nicht abspielen.")
+            return
+        _last_notify_play = now
+    except Exception as exc:
+        print(f"[WARN] Hinweiston-Fehler: {exc}")
+
+
+def _announce_text(text: str):
+    play_notification_sound()
+    if text.strip():
+        speak_text(text)
+
+
 # ==== ANKÜNDIGUNGSSYSTEM ====
 def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: str):
-    line = f"Tisch {tischname}: {team_a} gegen {team_b}"
+    spoken_text = format_spoken_text(tischname, team_a, team_b)
     if not write_announcement_files:
-        print(line)
-        speak_text(line)
+        print(spoken_text)
+        _announce_text(spoken_text)
         return
 
     try:
@@ -60,14 +298,13 @@ def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: 
         path = output_dir / fname
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(line + "\n")
-        print(f"✔ Neues Spiel auf Tisch {tischname} → Datei: {path}")
-        print(f"   → {line}")
+            f.write(spoken_text + "\n")
+        print(f"-> Neues Spiel auf Tisch {tischname} - Datei: {path}")
+        print(f"   -> {spoken_text}")
     except Exception as e:
         print(f"[ERROR] Konnte Ankündigungsdatei nicht schreiben: {e}")
     finally:
-        speak_text(line)
-
+        _announce_text(spoken_text)
 
 def main():
     show_banner()  # Logo und CLS beim Start

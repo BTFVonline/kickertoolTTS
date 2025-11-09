@@ -24,3 +24,9 @@ tts:
 files:
   save_audio: false           # WAVs dauerhaft speichern? (default: false = nur temporär)
   write_announcement_files: false  # Text-Dateien in data/<tournament>/announcements schreiben
+
+# Durchsagen
+announcement:
+  notify_sound: null          # Optionaler Hinweiston (mp3/wav); null = deaktiviert
+  notify_cooldown_seconds: 5  # Mindestabstand zwischen Sounds (Sekunden)
+  speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
