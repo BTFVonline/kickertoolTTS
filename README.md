@@ -12,7 +12,7 @@ Ein kleines Helferlein, das neue Matches aus der Tournament-API abholt und per T
 
 1. `config.yaml.example` nach `config.yaml` kopieren und API-Daten (`api_token`, `tournament_id`) eintragen.
 2. Gewünschten TTS-Provider und Optionen konfigurieren (Piper-Modellpfad, pyttsx3-Stimme, etc.).
-3. Optional einen Hinweiston (mp3/wav) angeben – relative Pfade beziehen sich auf das Projektverzeichnis.
+3. Optional einen Hinweiston (WAV) angeben – relative Pfade beziehen sich auf das Projektverzeichnis.
 4. Skript starten:
 
    ```bash
@@ -34,7 +34,7 @@ Ein kleines Helferlein, das neue Matches aus der Tournament-API abholt und per T
 
 ### Announcement-Optionen
 
-- `notify_sound`: Pfad zu mp3/wav. Wird relativ zu `config.yaml` aufgelöst.
+- `notify_sound`: Pfad zu einer WAV-Datei (mp3 wird derzeit nicht unterstützt). Wird relativ zu `config.yaml` aufgelöst.
 - `notify_resume_after_seconds`: Mindestzeit ohne TTS, bevor der Sound erneut abgespielt wird.
 - `speech_template`: Vorlage für klassische Eins-gegen-Eins-Matches.
 - `speech_template_doubles`: Optionale Vorlage für Doppel (2 vs 2). Wird automatisch verwendet, sobald eines der Teams mehr als einen Spieler enthält (Trennung mit `/`, `&`, `+` oder dem Wort „und“).
