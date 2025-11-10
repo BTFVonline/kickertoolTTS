@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+import json
 import yaml
 import shutil
 import subprocess
@@ -17,9 +18,9 @@ from pathlib import Path
 from collections import deque
 from extract_announcements_from_kickertool import (
     ensure_dirs, load_state, save_state, fetch_courts,
-    extract_match_info_from_court, safe_slug, output_dir
+    extract_match_info_from_court, safe_slug, output_dir, BASE_DIR
 )
-from text_to_speech import prepare_tts_playback
+from text_to_speech import prepare_tts_playback, set_tts_muted
 
 # ==== CONFIG LADEN ====
 CONFIG_PATH = Path("config.yaml")
@@ -41,6 +42,7 @@ if resume_after_raw is None:
     resume_after_raw = announcement_cfg.get("notify_cooldown_seconds")
 notify_resume_after_seconds = float(resume_after_raw or 0)
 announcements_enabled = bool(announcement_cfg.get("enabled", True))
+mute_enabled = bool(announcement_cfg.get("mute", False))
 notify_sound_path = None
 if notify_sound:
     p = Path(notify_sound)
@@ -63,6 +65,7 @@ ASCII_LOGO = r"""
 _UI_TTY = sys.stdout.isatty()
 _console_lock = threading.Lock()
 _announcements_state_lock = threading.Lock()
+_mute_state_lock = threading.Lock()
 _tts_preload_lock = threading.Lock()
 _tts_preload_executor = ThreadPoolExecutor(max_workers=max(2, ((os.cpu_count() or 2) // 2) or 1))
 _tts_preloaded_jobs: dict[str, Future] = {}
@@ -74,6 +77,8 @@ _notify_skip_logged = False
 _log_history: deque[str] = deque(maxlen=15)
 _announcement_history: deque[tuple[str, str]] = deque(maxlen=20)  # (cache_key, text)
 _show_logs_panel = False
+history_file = BASE_DIR / "announcement_history.json"
+set_tts_muted(mute_enabled)
 
 def clear_screen():
     try:
@@ -124,8 +129,9 @@ def render_ui():
         print("-" * width)
         status = "AKTIV" if _is_announcements_enabled() else "PAUSIERT"
         notify_state = "bereit" if notify_sound_path else "aus"
-        print(f"Ansagen: {status} | Hinweiston: {notify_state} | Queue: {len(_announcement_order)}")
-        print("Befehle: pause, resume, toggle, status, replay, logs")
+        mute_state = "stumm" if _is_muted() else "an"
+        print(f"Ansagen: {status} | Ton: {mute_state} | Hinweiston: {notify_state} | Queue: {len(_announcement_order)}")
+        print("Befehle: pause, resume, toggle, mute, replay, logs")
         print("-" * width)
         print("Anstehende Durchsagen:")
         if not _announcement_order:
@@ -488,18 +494,24 @@ _last_speech_finished = 0.0
 
 def play_notification_sound():
     global _last_speech_finished, _notify_skip_logged
+    if _is_muted():
+        return
     if not notify_sound_path:
         return
     now = time.monotonic()
     since_last = None
     if _last_speech_finished:
         since_last = now - _last_speech_finished
-        if notify_resume_after_seconds > 0 and since_last is not None and since_last < notify_resume_after_seconds:
+    if notify_resume_after_seconds > 0 and since_last is not None:
+        if since_last < notify_resume_after_seconds:
             if not _notify_skip_logged:
                 remaining = max(0.0, notify_resume_after_seconds - since_last)
                 ui_log(f"Hinweiston wartet noch {remaining:.1f}s.")
                 _notify_skip_logged = True
-        return
+            return
+        elif _notify_skip_logged:
+            ui_log("Hinweiston wieder aktiv.")
+            _notify_skip_logged = False
     if not notify_sound_path.is_file():
         ui_log(f"Hinweiston nicht gefunden: {notify_sound_path}", level="WARN")
         return
@@ -512,7 +524,9 @@ def play_notification_sound():
             ui_log(f"Konnte Hinweiston {notify_sound_path} nicht abspielen.", level="WARN")
             return
         _notify_skip_logged = False
-        if since_last is not None:
+        if since_last is None:
+            ui_log("Hinweiston abgespielt (erste Ansage).")
+        else:
             ui_log(f"Hinweiston abgespielt (Pause {since_last:.1f}s).")
     except Exception as exc:
         ui_log(f"Hinweiston-Fehler: {exc}", level="WARN")
@@ -532,6 +546,7 @@ def _announce_text(cache_key: str, text: str):
     _last_speech_finished = time.monotonic()
     with _console_lock:
         _announcement_history.appendleft((cache_key, text))
+    _persist_history()
 
 
 def _announcement_worker():
@@ -585,14 +600,14 @@ def _command_listener():
             _set_announcements_enabled(True, "Konsole")
         elif cmd in ("toggle", "t"):
             _toggle_announcements("Konsole")
-        elif cmd in ("status", "s"):
-            render_ui()
+        elif cmd in ("mute", "m"):
+            _toggle_mute("Konsole")
         elif cmd in ("logs", "l"):
             _toggle_logs_panel()
         elif cmd.startswith("replay"):
             _handle_replay_command(cmd)
         else:
-            ui_log(f"Unbekannter Befehl '{cmd}'. Verfügbar: pause/resume/toggle/status.")
+            ui_log(f"Unbekannter Befehl '{cmd}'. Verfügbar: pause/resume/toggle/mute/replay/logs.")
 
 
 _command_thread = threading.Thread(target=_command_listener, daemon=True, name="command-listener")
@@ -655,6 +670,56 @@ def _toggle_logs_panel():
     with _console_lock:
         _show_logs_panel = not _show_logs_panel
     ui_log(f"Log-Panel {'sichtbar' if _show_logs_panel else 'ausgeblendet'}")
+
+
+def _is_muted() -> bool:
+    with _mute_state_lock:
+        return mute_enabled
+
+
+def _set_muted(value: bool, source: str = "Config"):
+    global mute_enabled
+    value = bool(value)
+    with _mute_state_lock:
+        previous = mute_enabled
+        mute_enabled = value
+    if previous != value:
+        set_tts_muted(value)
+        state = "STUMM" if value else "AN"
+        ui_log(f"Ton {state} (Quelle: {source}).")
+    else:
+        set_tts_muted(value)
+
+
+def _toggle_mute(source: str = "Konsole"):
+    _set_muted(not _is_muted(), source=source)
+
+
+def _load_persisted_history():
+    if not history_file.exists():
+        return
+    try:
+        data = json.loads(history_file.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            for entry in data[:20]:
+                key = entry.get("id") or f"history-{len(_announcement_history)+1}"
+                text = entry.get("text") or ""
+                if text:
+                    _announcement_history.append((key, text))
+    except Exception as exc:
+        ui_log(f"Konnte History nicht laden: {exc}", level="WARN")
+
+
+def _persist_history():
+    try:
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = [{"id": key, "text": text} for key, text in list(_announcement_history)]
+        history_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        ui_log(f"Konnte History nicht speichern: {exc}", level="WARN")
+
+
+_load_persisted_history()
 
 
 # ==== ANKÜNDIGUNGSSYSTEM ====

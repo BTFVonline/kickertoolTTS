@@ -47,6 +47,7 @@ tts_voice_index = TTS_CFG.get("voice_index")    # int oder None
 
 # Dateien
 save_audio = bool(FILES_CFG.get("save_audio", False))
+_tts_muted = False
 
 # Pfad zu piper-Executable
 if os.name == "nt":
@@ -176,6 +177,11 @@ def _safe_delete(path: str):
         pass
 
 
+def set_tts_muted(value: bool):
+    global _tts_muted
+    _tts_muted = bool(value)
+
+
 def _pyttsx3_say(text: str, rate=170, volume=1.0, voice_index=None) -> bool:
     try:
         import pyttsx3  # sicherstellen, dass Importfehler sauber handled werden
@@ -227,6 +233,10 @@ def _build_piper_job(text: str) -> Optional[Callable[[], None]]:
         return None
 
     def _player():
+        if _tts_muted:
+            if not save_audio:
+                _safe_delete(wav_path)
+            return
         _play_wav(wav_path)
         if not save_audio:
             _safe_delete(wav_path)
@@ -236,6 +246,8 @@ def _build_piper_job(text: str) -> Optional[Callable[[], None]]:
 
 def _build_pyttsx_job(text: str) -> Callable[[], None]:
     def _player():
+        if _tts_muted:
+            return
         _pyttsx3_say(text, rate=tts_rate, volume=tts_volume, voice_index=tts_voice_index)
 
     return _player
