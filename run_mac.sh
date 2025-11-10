@@ -8,4 +8,14 @@ if [[ -f ".venv/bin/activate" ]]; then
   source ".venv/bin/activate"
 fi
 
-python announcement_tts.py "$@"
+PYTHON_BIN="python"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "Fehler: Weder 'python' noch 'python3' gefunden. Bitte Python installieren." >&2
+  exit 1
+fi
+
+"$PYTHON_BIN" announcement_tts.py "$@"
