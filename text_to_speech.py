@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
+from typing import Callable, Optional
 
 # Optional: pyttsx3 Fallback
 try:
@@ -90,27 +91,27 @@ def _umlaut_fallback(text: str) -> str:
     return "".join(repl.get(ch, ch) for ch in text)
 
 
-def _piper_say_once(text: str,
-                    exe="piper",
-                    model_path="voices/de_DE-thorsten-medium.onnx",
-                    speaker=None,
-                    length_scale=0.95,
-                    noise_scale=0.5,
-                    noise_w=0.8,
-                    keep_file=False) -> bool:
+def _piper_generate_audio(text: str,
+                          exe="piper",
+                          model_path="voices/de_DE-thorsten-medium.onnx",
+                          speaker=None,
+                          length_scale=0.95,
+                          noise_scale=0.5,
+                          noise_w=0.8,
+                          persist=False) -> Optional[str]:
     exe_path = exe
     if os.name == "nt" and not Path(exe_path).exists():
         exe_path = "piper"
 
     if shutil.which(exe_path) is None and not Path(exe_path).exists():
         print(f"[WARN] Piper nicht gefunden unter: {exe_path}")
-        return False
+        return None
 
     model_path = Path(model_path)
     json_path = Path(str(model_path) + ".json")
     if not model_path.exists() or not json_path.exists():
         print("[WARN] Piper-Model oder Config fehlt.")
-        return False
+        return None
 
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -127,18 +128,52 @@ def _piper_say_once(text: str,
             cmd += ["--speaker", str(speaker)]
 
         subprocess.run(cmd, input=_normalize_text_for_tts(text).encode("ansi"), check=True)
-        _play_wav(wav_path)
-        if not keep_file:
-            try:
-                os.remove(wav_path)
-            except Exception:
-                pass
-        else:
+        if persist:
             print(f"[INFO] Audio gespeichert: {wav_path}")
-        return True
+        return wav_path
     except Exception as e:
         print(f"[WARN] Piper Fehler: {e}")
+        try:
+            if wav_path:
+                os.remove(wav_path)
+        except Exception:
+            pass
+        return None
+
+
+def _piper_say_once(text: str,
+                    exe="piper",
+                    model_path="voices/de_DE-thorsten-medium.onnx",
+                    speaker=None,
+                    length_scale=0.95,
+                    noise_scale=0.5,
+                    noise_w=0.8,
+                    keep_file=False) -> bool:
+    wav_path = _piper_generate_audio(
+        text=text,
+        exe=exe,
+        model_path=model_path,
+        speaker=speaker,
+        length_scale=length_scale,
+        noise_scale=noise_scale,
+        noise_w=noise_w,
+        persist=keep_file,
+    )
+    if not wav_path:
         return False
+    _play_wav(wav_path)
+    if not keep_file:
+        _safe_delete(wav_path)
+    return True
+
+
+def _safe_delete(path: str):
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except Exception:
+        pass
 
 
 def _pyttsx3_say(text: str, rate=170, volume=1.0, voice_index=None) -> bool:
@@ -164,22 +199,21 @@ def _pyttsx3_say(text: str, rate=170, volume=1.0, voice_index=None) -> bool:
         return False
 
 
-def speak_text(text: str):
-    if (TTS_CFG.get("provider") or "piper").lower() == "piper":
-        if _piper_say_once(
-            text=text,
-            exe=piper_executable,
-            model_path=piper_model_path,
-            speaker=piper_speaker,
-            length_scale=piper_length_scale,
-            noise_scale=piper_noise_scale,
-            noise_w=piper_noise_w,
-            keep_file=save_audio,
-        ):
-            return
+def _build_piper_job(text: str) -> Optional[Callable[[], None]]:
+    wav_path = _piper_generate_audio(
+        text=text,
+        exe=piper_executable,
+        model_path=piper_model_path,
+        speaker=piper_speaker,
+        length_scale=piper_length_scale,
+        noise_scale=piper_noise_scale,
+        noise_w=piper_noise_w,
+        persist=save_audio,
+    )
+    if not wav_path:
         text2 = _umlaut_fallback(text)
         if text2 != text:
-            if _piper_say_once(
+            wav_path = _piper_generate_audio(
                 text=text2,
                 exe=piper_executable,
                 model_path=piper_model_path,
@@ -187,10 +221,47 @@ def speak_text(text: str):
                 length_scale=piper_length_scale,
                 noise_scale=piper_noise_scale,
                 noise_w=piper_noise_w,
-                keep_file=save_audio,
-            ):
-                return
-    _pyttsx3_say(text, rate=tts_rate, volume=tts_volume, voice_index=tts_voice_index)
+                persist=save_audio,
+            )
+    if not wav_path:
+        return None
+
+    def _player():
+        _play_wav(wav_path)
+        if not save_audio:
+            _safe_delete(wav_path)
+
+    return _player
+
+
+def _build_pyttsx_job(text: str) -> Callable[[], None]:
+    def _player():
+        _pyttsx3_say(text, rate=tts_rate, volume=tts_volume, voice_index=tts_voice_index)
+
+    return _player
+
+
+def prepare_tts_playback(text: str) -> Optional[Callable[[], None]]:
+    provider = (TTS_CFG.get("provider") or "piper").lower()
+    job = None
+    if provider == "piper":
+        job = _build_piper_job(text)
+        if job:
+            return job
+        return _build_pyttsx_job(text)
+    else:
+        job = _build_pyttsx_job(text)
+        if job:
+            return job
+        return _build_piper_job(text)
+
+
+def speak_text(text: str):
+    job = prepare_tts_playback(text)
+    if job:
+        job()
+    else:
+        print("[WARN] Keine TTS-Ausgabe möglich.")
 
 
 # =========================

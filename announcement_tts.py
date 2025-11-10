@@ -13,7 +13,7 @@ from extract_announcements_from_kickertool import (
     ensure_dirs, load_state, save_state, fetch_courts,
     extract_match_info_from_court, safe_slug, output_dir
 )
-from text_to_speech import speak_text
+from text_to_speech import prepare_tts_playback
 
 # ==== CONFIG LADEN ====
 CONFIG_PATH = Path("config.yaml")
@@ -350,11 +350,17 @@ def play_notification_sound():
 
 def _announce_text(text: str):
     global _last_speech_finished
+    spoken = (text or "").strip()
+    if not spoken:
+        return
+    job = prepare_tts_playback(spoken)
+    if job is None:
+        print("[WARN] Konnte TTS nicht vorbereiten – Hinweiston übersprungen.")
+        return
     play_notification_sound()
-    if text.strip():
-        speak_text(text)
-        _last_speech_finished = time.monotonic()
-        print("[INFO] TTS beendet – Pause-Timer zurückgesetzt.")
+    job()
+    _last_speech_finished = time.monotonic()
+    print("[INFO] TTS beendet – Pause-Timer zurückgesetzt.")
 
 
 # ==== ANKÜNDIGUNGSSYSTEM ====
