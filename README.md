@@ -36,6 +36,7 @@ Ein kleines Helferlein, das neue Matches aus der Tournament-API abholt und per T
 
 - `notify_sound`: Pfad zu einer WAV-Datei (mp3 wird derzeit nicht unterstützt). Wird relativ zu `config.yaml` aufgelöst.
 - `notify_resume_after_seconds`: Mindestzeit ohne TTS, bevor der Sound erneut abgespielt wird.
+- `enabled`: Bestimmt, ob beim Start automatisch Ansagen abgespielt werden (kann später per Konsole geändert werden).
 - `speech_template`: Vorlage für klassische Eins-gegen-Eins-Matches.
 - `speech_template_doubles`: Optionale Vorlage für Doppel (2 vs 2). Wird automatisch verwendet, sobald eines der Teams mehr als einen Spieler enthält (Trennung mit `/`, `&`, `+` oder dem Wort „und“).
 
@@ -70,6 +71,7 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 - Bei neuen Matches wird der frei konfigurierbare Text gesprochen; optional erfolgt vorher ein Hinweiston.
 - Das System bereitet jede Ansage in einem Hintergrundthread vor und reiht sie in eine Wiedergabe-Queue. Dadurch können weitere Ansagen schon während der aktuellen Ausgabe synthetisiert werden.
 - Der Hinweiston wird nur erneut abgespielt, wenn seit der letzten abgeschlossenen TTS-Ausgabe mindestens `notify_resume_after_seconds` vergangen sind. In der Konsole wird protokolliert, ob der Ton gespielt oder übersprungen wurde.
+- Über die Konsole kannst du jederzeit `pause`, `resume`, `toggle`, `status` oder `replay` eingeben. `replay` listet die letzten Durchsagen auf; mit `replay 3` bzw. `replay 2-4` kannst du einzelne oder mehrere alte Meldungen erneut einreihen. Die Queue der nächsten Ansagen wird live eingeblendet; die aktuell gesprochene Zeile ist farblich markiert (falls das Terminal ANSI-Farben unterstützt).
 - Sobald `write_announcement_files` aktiv ist, legt das Skript unter `data/<tournament>/announcements` eine Textdatei pro Ansage an.
 
 ## Nützliche Kommandos
@@ -79,6 +81,7 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 | `python announcement_tts.py`            | Startet die Dauerschleife zur Match-Ansage.              |
 | `python text_to_speech.py -t "Text"`    | Liest einen beliebigen Text gemäß der TTS-Config vor.    |
 | `python announcement_tts.py --help`     | Listet optionale CLI-Parameter auf.                      |
+| `replay`, `replay 3`, `replay 1-4`      | (Im laufenden Programm) letzte Ansagen anzeigen bzw. erneut abspielen. |
 
 ## Fehlerbehebung
 

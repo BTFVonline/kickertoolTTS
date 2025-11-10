@@ -3,6 +3,7 @@
 
 import os
 import re
+import sys
 import time
 import yaml
 import shutil
@@ -13,6 +14,7 @@ from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
+from collections import deque
 from extract_announcements_from_kickertool import (
     ensure_dirs, load_state, save_state, fetch_courts,
     extract_match_info_from_court, safe_slug, output_dir
@@ -38,6 +40,7 @@ resume_after_raw = announcement_cfg.get("notify_resume_after_seconds")
 if resume_after_raw is None:
     resume_after_raw = announcement_cfg.get("notify_cooldown_seconds")
 notify_resume_after_seconds = float(resume_after_raw or 0)
+announcements_enabled = bool(announcement_cfg.get("enabled", True))
 notify_sound_path = None
 if notify_sound:
     p = Path(notify_sound)
@@ -57,10 +60,20 @@ ASCII_LOGO = r"""
                                                                                                     
 """
 
+_UI_TTY = sys.stdout.isatty()
+_console_lock = threading.Lock()
+_announcements_state_lock = threading.Lock()
 _tts_preload_lock = threading.Lock()
 _tts_preload_executor = ThreadPoolExecutor(max_workers=max(2, ((os.cpu_count() or 2) // 2) or 1))
 _tts_preloaded_jobs: dict[str, Future] = {}
 _announcement_queue: "Queue[tuple[str, str]]" = Queue()
+_announcement_meta: dict[str, dict] = {}
+_announcement_order: deque[str] = deque()
+_current_announcement_key: str | None = None
+_notify_skip_logged = False
+_log_history: deque[str] = deque(maxlen=15)
+_announcement_history: deque[tuple[str, str]] = deque(maxlen=20)  # (cache_key, text)
+_show_logs_panel = False
 
 def clear_screen():
     try:
@@ -69,10 +82,98 @@ def clear_screen():
         pass
 
 def show_banner():
-    clear_screen()
-    print(ASCII_LOGO)
-    print(" " * 36 + "Kickertool TTS\n")
-    print("-" * 100)
+    if _UI_TTY:
+        render_ui()
+    else:
+        clear_screen()
+        print(ASCII_LOGO)
+        print(" " * 36 + "Kickertool TTS\n")
+        print("-" * 100)
+        print("Konsole unterstützt kein Live-UI. Logs folgen im Scroll.")
+
+
+def _is_announcements_enabled() -> bool:
+    with _announcements_state_lock:
+        return announcements_enabled
+
+
+def _set_announcements_enabled(value: bool, source: str = "Config"):
+    global announcements_enabled
+    value = bool(value)
+    with _announcements_state_lock:
+        previous = announcements_enabled
+        announcements_enabled = value
+    if previous != value:
+        state = "AKTIV" if value else "PAUSIERT"
+        ui_log(f"Ansagen {state} (Quelle: {source}).")
+
+
+def _toggle_announcements(source: str = "Konsole"):
+    _set_announcements_enabled(not _is_announcements_enabled(), source=source)
+
+
+def render_ui():
+    if not _UI_TTY:
+        return
+    with _console_lock:
+        clear_screen()
+        width = shutil.get_terminal_size((120, 30)).columns
+        width = max(60, width)
+        print(ASCII_LOGO)
+        print("Kickertool TTS".center(width))
+        print("-" * width)
+        status = "AKTIV" if _is_announcements_enabled() else "PAUSIERT"
+        notify_state = "bereit" if notify_sound_path else "aus"
+        print(f"Ansagen: {status} | Hinweiston: {notify_state} | Queue: {len(_announcement_order)}")
+        print("Befehle: pause, resume, toggle, status, replay, logs")
+        print("-" * width)
+        print("Anstehende Durchsagen:")
+        if not _announcement_order:
+            print("  (keine)")
+        else:
+            for key in list(_announcement_order):
+                meta = _announcement_meta.get(key)
+                if not meta:
+                    continue
+                status_marker = "\u25B6" if meta.get("status") == "playing" else "\u2022"
+                lines = meta["text"].splitlines() or [meta["text"]]
+                if meta.get("status") == "playing" and _UI_TTY:
+                    lines = [f"\x1b[32m{line}\x1b[0m" for line in lines]
+                print(f"  {status_marker} {lines[0]}")
+                for extra in lines[1:]:
+                    print(f"    {extra}")
+        print("-" * width)
+        print("Letzte Durchsagen:")
+        if not _announcement_history:
+            print("  (keine)")
+        else:
+            for idx, (_, text) in enumerate(list(_announcement_history)[:5], start=1):
+                lines = text.splitlines()
+                primary = lines[0]
+                if len(primary) > width - 6:
+                    primary = primary[: width - 9] + "..."
+                print(f"  {idx:>2}. {primary}")
+        print("-" * width)
+        if _show_logs_panel:
+            print("Logs:")
+            if not _log_history:
+                print("  (keine)")
+            else:
+                for entry in _log_history:
+                    print(f"  {entry}")
+        else:
+            print("Logs verborgen – 'logs' eingeben zum Anzeigen.")
+        print("-" * width)
+
+
+def ui_log(message: str, level: str = "INFO"):
+    entry = f"[{level}] {message}"
+    with _console_lock:
+        _log_history.append(entry)
+    if not _UI_TTY:
+        print(entry)
+    else:
+        render_ui()
 
 
 def _normalize_cache_key(cache_key: str | None, text: str) -> str:
@@ -107,7 +208,7 @@ def _take_prepared_job(cache_key: str, text: str):
         try:
             job = future.result()
         except Exception as exc:
-            print(f"[WARN] Vorbereiten der TTS fehlgeschlagen: {exc}")
+            ui_log(f"Vorbereiten der TTS fehlgeschlagen: {exc}", level="WARN")
     if job is None:
         job = prepare_tts_playback(text)
     return job
@@ -119,6 +220,13 @@ def _queue_announcement(cache_key: str, text: str):
         return
     _preload_tts_job(cache_key, spoken)
     _announcement_queue.put((cache_key, spoken))
+    with _console_lock:
+        _announcement_meta[cache_key] = {"text": spoken, "status": "queued"}
+        _announcement_order.append(cache_key)
+    if not _is_announcements_enabled():
+        ui_log("Ansagen pausiert – Durchsage wartet.")
+    else:
+        render_ui()
 
 
 def _make_announcement_key(tischname: str | None, match_id: str | None, team_a: str | None, team_b: str | None) -> str:
@@ -379,21 +487,21 @@ _last_speech_finished = 0.0
 
 
 def play_notification_sound():
-    global _last_speech_finished
+    global _last_speech_finished, _notify_skip_logged
     if not notify_sound_path:
         return
     now = time.monotonic()
     since_last = None
     if _last_speech_finished:
         since_last = now - _last_speech_finished
-    if notify_resume_after_seconds > 0 and since_last is not None and since_last < notify_resume_after_seconds:
-        print(
-            f"[INFO] Hinweiston übersprungen: letzte TTS vor {since_last:.1f}s "
-            f"(< {notify_resume_after_seconds}s)."
-        )
+        if notify_resume_after_seconds > 0 and since_last is not None and since_last < notify_resume_after_seconds:
+            if not _notify_skip_logged:
+                remaining = max(0.0, notify_resume_after_seconds - since_last)
+                ui_log(f"Hinweiston wartet noch {remaining:.1f}s.")
+                _notify_skip_logged = True
         return
     if not notify_sound_path.is_file():
-        print(f"[WARN] Hinweiston nicht gefunden: {notify_sound_path}")
+        ui_log(f"Hinweiston nicht gefunden: {notify_sound_path}", level="WARN")
         return
     try:
         if os.name == "nt":
@@ -401,17 +509,13 @@ def play_notification_sound():
         else:
             played = _play_with_system_player(notify_sound_path)
         if not played:
-            print(f"[WARN] Konnte Hinweiston {notify_sound_path} nicht abspielen.")
+            ui_log(f"Konnte Hinweiston {notify_sound_path} nicht abspielen.", level="WARN")
             return
-        if since_last is None:
-            print(f"[INFO] Hinweiston '{notify_sound_name}' abgespielt (erste Ansage).")
-        else:
-            print(
-                f"[INFO] Hinweiston '{notify_sound_name}' abgespielt "
-                f"(Pause {since_last:.1f}s)."
-            )
+        _notify_skip_logged = False
+        if since_last is not None:
+            ui_log(f"Hinweiston abgespielt (Pause {since_last:.1f}s).")
     except Exception as exc:
-        print(f"[WARN] Hinweiston-Fehler: {exc}")
+        ui_log(f"Hinweiston-Fehler: {exc}", level="WARN")
 
 
 def _announce_text(cache_key: str, text: str):
@@ -421,22 +525,41 @@ def _announce_text(cache_key: str, text: str):
         return
     job = _take_prepared_job(cache_key, spoken)
     if job is None:
-        print("[WARN] Konnte TTS nicht vorbereiten – Hinweiston übersprungen.")
+        ui_log("Konnte TTS nicht vorbereiten – Hinweiston übersprungen.", level="WARN")
         return
     play_notification_sound()
     job()
     _last_speech_finished = time.monotonic()
-    print("[INFO] TTS beendet – Pause-Timer zurückgesetzt.")
+    with _console_lock:
+        _announcement_history.appendleft((cache_key, text))
 
 
 def _announcement_worker():
+    global _current_announcement_key
     while True:
         cache_key, text = _announcement_queue.get()
         try:
+            while not _is_announcements_enabled():
+                time.sleep(0.25)
+            with _console_lock:
+                meta = _announcement_meta.get(cache_key)
+                if meta:
+                    meta["status"] = "playing"
+                _current_announcement_key = cache_key
+            render_ui()
             _announce_text(cache_key, text)
         except Exception as exc:
-            print(f"[WARN] TTS-Worker-Fehler: {exc}")
+            ui_log(f"TTS-Worker-Fehler: {exc}", level="WARN")
         finally:
+            with _console_lock:
+                _announcement_meta.pop(cache_key, None)
+                try:
+                    _announcement_order.remove(cache_key)
+                except ValueError:
+                    pass
+                if _current_announcement_key == cache_key:
+                    _current_announcement_key = None
+            render_ui()
             _announcement_queue.task_done()
 
 
@@ -444,12 +567,102 @@ _announcement_thread = threading.Thread(target=_announcement_worker, daemon=True
 _announcement_thread.start()
 
 
+def _command_listener():
+    while True:
+        try:
+            raw = sys.stdin.readline()
+        except Exception:
+            break
+        if raw == "":
+            time.sleep(0.25)
+            continue
+        cmd = raw.strip().lower()
+        if not cmd:
+            continue
+        if cmd in ("pause", "p"):
+            _set_announcements_enabled(False, "Konsole")
+        elif cmd in ("resume", "r"):
+            _set_announcements_enabled(True, "Konsole")
+        elif cmd in ("toggle", "t"):
+            _toggle_announcements("Konsole")
+        elif cmd in ("status", "s"):
+            render_ui()
+        elif cmd in ("logs", "l"):
+            _toggle_logs_panel()
+        elif cmd.startswith("replay"):
+            _handle_replay_command(cmd)
+        else:
+            ui_log(f"Unbekannter Befehl '{cmd}'. Verfügbar: pause/resume/toggle/status.")
+
+
+_command_thread = threading.Thread(target=_command_listener, daemon=True, name="command-listener")
+_command_thread.start()
+
+
+def _handle_replay_command(cmd: str):
+    args = cmd.split()
+    if len(args) == 1:
+        _print_replay_list()
+        return
+    selection = args[1]
+    if "-" in selection:
+        start_str, end_str = selection.split("-", 1)
+        try:
+            start = int(start_str)
+            end = int(end_str)
+        except ValueError:
+            ui_log("Ungültiger Bereich. Beispiel: replay 1-3", level="WARN")
+            return
+        if start < 1 or end < start:
+            ui_log("Bereich außerhalb der verfügbaren Einträge.", level="WARN")
+            return
+        entries = list(_announcement_history)
+        to_replay = entries[start - 1 : end]
+    else:
+        try:
+            index = int(selection)
+        except ValueError:
+            ui_log("Ungültige Auswahl. Beispiel: replay 2 oder replay 1-3", level="WARN")
+            return
+        if index < 1 or index > len(_announcement_history):
+            ui_log("Auswahl außerhalb der letzten Einträge.", level="WARN")
+            return
+        entries = list(_announcement_history)
+        to_replay = [entries[index - 1]]
+
+    for _, text in reversed(to_replay):
+        replay_key = _make_announcement_key("replay", None, "", "")
+        _queue_announcement(replay_key, text)
+    ui_log(f"{len(to_replay)} Durchsage(n) erneut eingereiht.")
+
+
+def _print_replay_list():
+    if not _announcement_history:
+        ui_log("Noch keine vergangenen Durchsagen vorhanden.", level="INFO")
+        return
+    lines = ["Letzte Durchsagen:"]
+    entries = list(_announcement_history)[:10]
+    for idx, (_, text) in enumerate(entries, start=1):
+        snippet = text.replace("\n", " ")
+        if len(snippet) > 90:
+            snippet = snippet[:87] + "..."
+        lines.append(f"{idx:>2}: {snippet}")
+    ui_log("\n".join(lines))
+
+
+def _toggle_logs_panel():
+    global _show_logs_panel
+    with _console_lock:
+        _show_logs_panel = not _show_logs_panel
+    ui_log(f"Log-Panel {'sichtbar' if _show_logs_panel else 'ausgeblendet'}")
+
+
 # ==== ANKÜNDIGUNGSSYSTEM ====
 def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: str):
     spoken_text = format_spoken_text(tischname, team_a, team_b)
     announcement_key = _make_announcement_key(tischname, match_id, team_a, team_b)
     if not write_announcement_files:
-        print(spoken_text)
+        ui_log(spoken_text)
         _queue_announcement(announcement_key, spoken_text)
         return
 
@@ -460,10 +673,10 @@ def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: 
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(spoken_text + "\n")
-        print(f"-> Neues Spiel auf Tisch {tischname} - Datei: {path}")
-        print(f"   -> {spoken_text}")
+        ui_log(f"Neues Spiel auf Tisch {tischname} – Datei: {path}")
+        ui_log(f"   {spoken_text}")
     except Exception as e:
-        print(f"[ERROR] Konnte Ankündigungsdatei nicht schreiben: {e}")
+        ui_log(f"Konnte Ankündigungsdatei nicht schreiben: {e}", level="ERROR")
     finally:
         _queue_announcement(announcement_key, spoken_text)
 
@@ -472,11 +685,11 @@ def main():
     ensure_dirs()
     state = load_state()
 
-    print(f"Starte Überwachung aller Tische. Polling alle {poll_interval}s.")
-    print(f"Schreibe Ankündigungen: {'JA' if write_announcement_files else 'NEIN'}")
+    ui_log(f"Starte Überwachung aller Tische. Polling alle {poll_interval}s.")
+    ui_log(f"Schreibe Ankündigungen: {'JA' if write_announcement_files else 'NEIN'}")
     if write_announcement_files:
-        print(f"Zielordner: {output_dir.resolve()}")
-    print("Beende mit STRG+C.\n")
+        ui_log(f"Zielordner: {output_dir.resolve()}")
+    ui_log("Beende mit STRG+C (CTRL+C).")
 
     while True:
         courts = fetch_courts()
@@ -489,7 +702,7 @@ def main():
 
                 if not has_full:
                     if state.get(tischname) is not None:
-                        print(f"[INFO] Tisch {tischname}: kein aktives Match → State reset")
+                        ui_log(f"Tisch {tischname}: kein aktives Match – State reset")
                         state[tischname] = None
                         save_state(state)
                     continue
@@ -502,7 +715,7 @@ def main():
                     state[tischname] = key
                     save_state(state)
         else:
-            print("[WARN] Konnte Court-Liste nicht laden oder Response-Format unerwartet.")
+            ui_log("Konnte Court-Liste nicht laden oder Response-Format unerwartet.", level="WARN")
 
         time.sleep(poll_interval)
 
@@ -511,6 +724,6 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nÜberwachung beendet.")
+        ui_log("Überwachung beendet.")
     except Exception as e:
-        print(f"[FATAL] {e}")
+        ui_log(f"FATAL: {e}", level="FATAL")
