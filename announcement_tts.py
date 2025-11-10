@@ -131,7 +131,8 @@ def render_ui():
         notify_state = "bereit" if notify_sound_path else "aus"
         mute_state = "stumm" if _is_muted() else "an"
         print(f"Ansagen: {status} | Ton: {mute_state} | Hinweiston: {notify_state} | Queue: {len(_announcement_order)}")
-        print("Befehle: pause, resume, toggle, mute, replay, logs")
+        pause_label = "[P]lay" if not _is_announcements_enabled() else "[P]ause"
+        print(f"Befehle: {pause_label}, [M]ute, repla[y], [L]ogs")
         print("-" * width)
         print("Anstehende Durchsagen:")
         if not _announcement_order:
@@ -595,11 +596,10 @@ def _command_listener():
         if not cmd:
             continue
         if cmd in ("pause", "p"):
-            _set_announcements_enabled(False, "Konsole")
-        elif cmd in ("resume", "r"):
-            _set_announcements_enabled(True, "Konsole")
-        elif cmd in ("toggle", "t"):
-            _toggle_announcements("Konsole")
+            if _is_announcements_enabled():
+                _set_announcements_enabled(False, "Konsole")
+            else:
+                _set_announcements_enabled(True, "Konsole")
         elif cmd in ("mute", "m"):
             _toggle_mute("Konsole")
         elif cmd in ("logs", "l"):
