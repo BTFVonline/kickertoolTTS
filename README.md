@@ -36,7 +36,8 @@ Ein kleines Helferlein, das neue Matches aus der Tournament-API abholt und per T
 
 - `notify_sound`: Pfad zu mp3/wav. Wird relativ zu `config.yaml` aufgelöst.
 - `notify_resume_after_seconds`: Mindestzeit ohne TTS, bevor der Sound erneut abgespielt wird.
-- `speech_template`: Frei formulierbarer Text mit Platzhaltern (Tabelle siehe unten).
+- `speech_template`: Vorlage für klassische Eins-gegen-Eins-Matches.
+- `speech_template_doubles`: Optionale Vorlage für Doppel (2 vs 2). Wird automatisch verwendet, sobald eines der Teams mehr als einen Spieler enthält (Trennung mit `/`, `&`, `+` oder dem Wort „und“).
 
 ### Verfügbare Platzhalter für `speech_template`
 
@@ -45,18 +46,22 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 | Platzhalter                 | Inhalt                                                                              |
 | --------------------------- | ----------------------------------------------------------------------------------- |
 | `{TABLE}`, `{TABLE_NAME}`   | Anzeigename des Tisches.                                                            |
-| `{PLAYER1_FULL}`            | Originalname Team A (unverändert).                                                  |
-| `{PLAYER1_FULLNAME}`        | Alias für `{PLAYER1_FULL}`.                                                         |
-| `{PLAYER1_FIRST}`, `{PLAYER1_FIRSTNAME}`, `{PLAYER1_NAME}` | Erster Name bzw. Vorname von Team A (heuristisch aufgeteilt).     |
-| `{PLAYER1_SURNAME}`, `{PLAYER1_LASTNAME}` | Nachname von Team A (heuristisch).                                  |
-| `{PLAYER2_FULL}`, `{PLAYER2_FULLNAME}`    | Originalname Team B.                                                   |
-| `{PLAYER2_FIRST}`, `{PLAYER2_FIRSTNAME}`, `{PLAYER2_NAME}` | Vorname von Team B.                                             |
-| `{PLAYER2_SURNAME}`, `{PLAYER2_LASTNAME}` | Nachname von Team B.                                                  |
-| `{TEAM_A}`                  | Voller Roh-Name Team A.                                                             |
-| `{TEAM_B}`                  | Voller Roh-Name Team B.                                                             |
-| `{NOTIFY_SOUND}`            | Dateiname des Hinweistons.                                                          |
-| `{NOTIFY_SOUND_NAME}`       | Alias für `{NOTIFY_SOUND}`.                                                         |
+| `{PLAYER1_*}`               | Bezieht sich auf den ersten Spieler von Team A (voller Name, Vorname, Nachname – siehe Tabelle unten). |
+| `{PLAYER2_*}`               | Entspricht `{PLAYER1_*}` für Team B.                                                |
+| `{TEAM_A}`, `{TEAM_B}`      | Originaltext der Team-Namen (so wie aus der API geliefert).                        |
+| `{TEAM_A_MEMBER_COUNT}` / `{TEAM_B_MEMBER_COUNT}` | Anzahl der erkannten Spieler (max. 2) pro Team.                        |
+| `{IS_DOUBLES}`, `{IS_SINGLES}` | Boolescher Status, ob ein Doppel erkannt wurde.                                   |
+| `{TEAM_A_PLAYER1_*}`, `{TEAM_A_PLAYER2_*}` | Daten für Spieler 1 bzw. 2 innerhalb von Team A (FULL, FIRST, SURNAME, …). |
+| `{TEAM_B_PLAYER1_*}`, `{TEAM_B_PLAYER2_*}` | Entsprechende Daten für Team B.                                           |
+| `{NOTIFY_SOUND}`, `{NOTIFY_SOUND_NAME}` | Dateiname des Hinweistons.                                                 |
 | `{NOTIFY_SOUND_PATH}`       | Absoluter Pfad zum Hinweiston (leer, wenn keiner konfiguriert ist).                |
+
+**Namens-Platzhalter (`*_FULL`, `*_FIRST`, `*_SURNAME`, …)**  
+- `FULL` / `FULLNAME`: Originaltext ohne Änderungen.  
+- `FIRST` / `FIRSTNAME` / `NAME`: Erster Name (bei „Nachname, Vorname“-Notation wird automatisch gedreht).  
+- `SURNAME` / `LASTNAME`: Letzter Name.
+
+> **Doppel-Erkennung:** Team-Namen werden auftrennt, sobald sie Trennzeichen wie `/`, `&`, `+` oder das Wort „und“ enthalten. Es werden maximal zwei Spieler pro Team ausgewertet; zusätzliche Einträge werden ignoriert.
 
 > **Hinweis:** Fehlende Platzhalter bleiben unverändert (z. B. `{UNKNOWN_TAG}`), sodass Tippfehler sofort auffallen.
 

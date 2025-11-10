@@ -27,6 +27,7 @@ write_announcement_files = CONFIG.get("files", {}).get("write_announcement_files
 announcement_cfg = CONFIG.get("announcement") or {}
 default_template = "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
 speech_template = (announcement_cfg.get("speech_template") or default_template).strip()
+speech_template_doubles = (announcement_cfg.get("speech_template_doubles") or "").strip()
 notify_sound_raw = (announcement_cfg.get("notify_sound") or "").strip()
 notify_sound = notify_sound_raw or None
 resume_after_raw = announcement_cfg.get("notify_resume_after_seconds")
@@ -85,6 +86,18 @@ def _split_player_name(name: str) -> dict:
     return {"full": name, "first": first, "last": last}
 
 
+TEAM_DELIMITER_PATTERN = re.compile(r"\s*(?:/|&|\+|\bund\b)\s*", re.IGNORECASE)
+
+
+def _split_team_members(name: str) -> list:
+    if not (name or "").strip():
+        return []
+    raw = name.strip()
+    if TEAM_DELIMITER_PATTERN.search(raw):
+        return [part.strip() for part in TEAM_DELIMITER_PATTERN.split(raw) if part.strip()]
+    return [raw]
+
+
 TEMPLATE_PATTERN = re.compile(r"{([^{}]+)}")
 
 
@@ -110,9 +123,38 @@ def _add_aliases(context: dict) -> dict:
     return enriched
 
 
+def _add_member_placeholders(context: dict, prefix: str, members: list):
+    prefix = prefix.upper()
+    count = min(len(members), 2)
+    for idx in range(count):
+        info = _split_player_name(members[idx])
+        slot = f"{prefix}_PLAYER{idx + 1}"
+        context[f"{slot}_FULL"] = info["full"]
+        context[f"{slot}_FULLNAME"] = info["full"]
+        context[f"{slot}_FIRST"] = info["first"]
+        context[f"{slot}_FIRSTNAME"] = info["first"]
+        context[f"{slot}_NAME"] = info["first"]
+        context[f"{slot}_SURNAME"] = info["last"]
+        context[f"{slot}_LASTNAME"] = info["last"]
+    for idx in range(count, 2):
+        slot = f"{prefix}_PLAYER{idx + 1}"
+        context[f"{slot}_FULL"] = ""
+        context[f"{slot}_FULLNAME"] = ""
+        context[f"{slot}_FIRST"] = ""
+        context[f"{slot}_FIRSTNAME"] = ""
+        context[f"{slot}_NAME"] = ""
+        context[f"{slot}_SURNAME"] = ""
+        context[f"{slot}_LASTNAME"] = ""
+
+
 def _build_template_context(table: str, player_a: str, player_b: str) -> dict:
-    p1 = _split_player_name(player_a)
-    p2 = _split_player_name(player_b)
+    team_a_members = _split_team_members(player_a)
+    team_b_members = _split_team_members(player_b)
+    primary_a = team_a_members[0] if team_a_members else (player_a or "")
+    primary_b = team_b_members[0] if team_b_members else (player_b or "")
+    p1 = _split_player_name(primary_a)
+    p2 = _split_player_name(primary_b)
+    is_doubles = max(len(team_a_members), len(team_b_members)) > 1
     context = {
         "TABLE": table or "",
         "TABLE_NAME": table or "",
@@ -135,7 +177,13 @@ def _build_template_context(table: str, player_a: str, player_b: str) -> dict:
         "NOTIFY_SOUND": notify_sound_name or "",
         "NOTIFY_SOUND_NAME": notify_sound_name or "",
         "NOTIFY_SOUND_PATH": str(notify_sound_path) if notify_sound_path else (notify_sound or ""),
+        "TEAM_A_MEMBER_COUNT": len(team_a_members),
+        "TEAM_B_MEMBER_COUNT": len(team_b_members),
+        "IS_DOUBLES": is_doubles,
+        "IS_SINGLES": not is_doubles,
     }
+    _add_member_placeholders(context, "TEAM_A", team_a_members)
+    _add_member_placeholders(context, "TEAM_B", team_b_members)
     return _add_aliases(context)
 
 
@@ -150,9 +198,15 @@ def _render_template(template: str, context: dict) -> str:
     return TEMPLATE_PATTERN.sub(replacer, template)
 
 
+def _select_template(context: dict) -> str:
+    if context.get("IS_DOUBLES") and speech_template_doubles:
+        return speech_template_doubles
+    return speech_template or default_template
+
+
 def format_spoken_text(table: str, player_a: str, player_b: str) -> str:
     context = _build_template_context(table, player_a, player_b)
-    template = speech_template or default_template
+    template = _select_template(context)
     text = _render_template(template, context).strip()
     if text:
         return text

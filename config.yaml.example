@@ -31,3 +31,4 @@ announcement:
   notify_resume_after_seconds: 30  # Wartezeit ohne TTS, bevor der Sound erneut abgespielt wird
   # Liste aller Platzhalter siehe README (Abschnitt "Verfügbare Platzhalter").
   speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
+  speech_template_doubles: "Tisch {TABLE}: {TEAM_A_PLAYER1_FULL} und {TEAM_A_PLAYER2_FULL} gegen {TEAM_B_PLAYER1_FULL} und {TEAM_B_PLAYER2_FULL}"
