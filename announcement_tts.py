@@ -91,7 +91,7 @@ def show_banner():
         render_ui()
     else:
         clear_screen()
-        print(ASCII_LOGO)
+        print(_logo_art())
         print(" " * 36 + "Kickertool TTS\n")
         print("-" * 100)
         print("Konsole unterstützt kein Live-UI. Logs folgen im Scroll.")
@@ -124,7 +124,7 @@ def render_ui():
         clear_screen()
         width = shutil.get_terminal_size((120, 30)).columns
         width = max(60, width)
-        print(ASCII_LOGO)
+        print(_logo_art())
         print("Kickertool TTS".center(width))
         print("-" * width)
         status = "AKTIV" if _is_announcements_enabled() else "PAUSIERT"
@@ -677,6 +677,12 @@ def _toggle_logs_panel():
     with _console_lock:
         _show_logs_panel = not _show_logs_panel
     ui_log(f"Log-Panel {'sichtbar' if _show_logs_panel else 'ausgeblendet'}")
+
+
+def _logo_art() -> str:
+    if _UI_TTY:
+        return f"\x1b[32m{ASCII_LOGO}\x1b[0m"
+    return ASCII_LOGO
 
 
 def _is_muted() -> bool:
