@@ -221,14 +221,18 @@ def _take_prepared_job(cache_key: str, text: str):
     return job
 
 
-def _queue_announcement(cache_key: str, text: str):
+def _queue_announcement(cache_key: str, text: str, *, record_history: bool = True):
     spoken = (text or "").strip()
     if not spoken:
         return
     _preload_tts_job(cache_key, spoken)
     _announcement_queue.put((cache_key, spoken))
     with _console_lock:
-        _announcement_meta[cache_key] = {"text": spoken, "status": "queued"}
+        _announcement_meta[cache_key] = {
+            "text": spoken,
+            "status": "queued",
+            "record_history": record_history,
+        }
         _announcement_order.append(cache_key)
     if not _is_announcements_enabled():
         ui_log("Ansagen pausiert – Durchsage wartet.")
@@ -546,7 +550,9 @@ def _announce_text(cache_key: str, text: str):
     job()
     _last_speech_finished = time.monotonic()
     with _console_lock:
-        _announcement_history.appendleft((cache_key, text))
+        meta = _announcement_meta.get(cache_key, {})
+        if meta.get("record_history", True):
+            _announcement_history.appendleft((cache_key, text))
     _persist_history()
 
 
@@ -648,7 +654,7 @@ def _handle_replay_command(cmd: str):
 
     for _, text in reversed(to_replay):
         replay_key = _make_announcement_key("replay", None, "", "")
-        _queue_announcement(replay_key, text)
+        _queue_announcement(replay_key, text, record_history=False)
     ui_log(f"{len(to_replay)} Durchsage(n) erneut eingereiht.")
 
 
