@@ -28,5 +28,5 @@ files:
 # Durchsagen
 announcement:
   notify_sound: null          # Optionaler Hinweiston (mp3/wav); null = deaktiviert
-  notify_cooldown_seconds: 5  # Mindestabstand zwischen Sounds (Sekunden)
+  notify_resume_after_seconds: 30  # Wartezeit ohne TTS, bevor der Sound erneut abgespielt wird
   speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"

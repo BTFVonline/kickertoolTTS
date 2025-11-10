@@ -29,7 +29,10 @@ default_template = "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
 speech_template = (announcement_cfg.get("speech_template") or default_template).strip()
 notify_sound_raw = (announcement_cfg.get("notify_sound") or "").strip()
 notify_sound = notify_sound_raw or None
-notify_cooldown_seconds = float(announcement_cfg.get("notify_cooldown_seconds") or 0)
+resume_after_raw = announcement_cfg.get("notify_resume_after_seconds")
+if resume_after_raw is None:
+    resume_after_raw = announcement_cfg.get("notify_cooldown_seconds")
+notify_resume_after_seconds = float(resume_after_raw or 0)
 notify_sound_path = None
 if notify_sound:
     p = Path(notify_sound)
@@ -252,15 +255,22 @@ def _play_with_presentation_core(audio_path: Path) -> bool:
         return False
 
 
-_last_notify_play = 0.0
+_last_speech_finished = 0.0
 
 
 def play_notification_sound():
-    global _last_notify_play
+    global _last_speech_finished
     if not notify_sound_path:
         return
     now = time.monotonic()
-    if notify_cooldown_seconds > 0 and now - _last_notify_play < notify_cooldown_seconds:
+    since_last = None
+    if _last_speech_finished:
+        since_last = now - _last_speech_finished
+    if notify_resume_after_seconds > 0 and since_last is not None and since_last < notify_resume_after_seconds:
+        print(
+            f"[INFO] Hinweiston übersprungen: letzte TTS vor {since_last:.1f}s "
+            f"(< {notify_resume_after_seconds}s)."
+        )
         return
     if not notify_sound_path.is_file():
         print(f"[WARN] Hinweiston nicht gefunden: {notify_sound_path}")
@@ -273,15 +283,24 @@ def play_notification_sound():
         if not played:
             print(f"[WARN] Konnte Hinweiston {notify_sound_path} nicht abspielen.")
             return
-        _last_notify_play = now
+        if since_last is None:
+            print(f"[INFO] Hinweiston '{notify_sound_name}' abgespielt (erste Ansage).")
+        else:
+            print(
+                f"[INFO] Hinweiston '{notify_sound_name}' abgespielt "
+                f"(Pause {since_last:.1f}s)."
+            )
     except Exception as exc:
         print(f"[WARN] Hinweiston-Fehler: {exc}")
 
 
 def _announce_text(text: str):
+    global _last_speech_finished
     play_notification_sound()
     if text.strip():
         speak_text(text)
+        _last_speech_finished = time.monotonic()
+        print("[INFO] TTS beendet – Pause-Timer zurückgesetzt.")
 
 
 # ==== ANKÜNDIGUNGSSYSTEM ====
