@@ -68,6 +68,7 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 ## Logging & Verhalten
 
 - Bei neuen Matches wird der frei konfigurierbare Text gesprochen; optional erfolgt vorher ein Hinweiston.
+- Das System bereitet jede Ansage in einem Hintergrundthread vor und reiht sie in eine Wiedergabe-Queue. Dadurch können weitere Ansagen schon während der aktuellen Ausgabe synthetisiert werden.
 - Der Hinweiston wird nur erneut abgespielt, wenn seit der letzten abgeschlossenen TTS-Ausgabe mindestens `notify_resume_after_seconds` vergangen sind. In der Konsole wird protokolliert, ob der Ton gespielt oder übersprungen wurde.
 - Sobald `write_announcement_files` aktiv ist, legt das Skript unter `data/<tournament>/announcements` eine Textdatei pro Ansage an.
 

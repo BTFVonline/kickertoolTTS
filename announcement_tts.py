@@ -7,6 +7,10 @@ import time
 import yaml
 import shutil
 import subprocess
+import threading
+import atexit
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
 from extract_announcements_from_kickertool import (
@@ -50,8 +54,13 @@ ASCII_LOGO = r"""
 ██╔═██╗ ██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗   ██║   ██║   ██║██║   ██║██║     ██║      ██║   ╚════██║
 ██║  ██╗██║╚██████╗██║  ██╗███████╗██║  ██║   ██║   ╚██████╔╝╚██████╔╝███████╗██║      ██║   ███████║
 ╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚═╝      ╚═╝   ╚══════╝
-                                                                                                     
+                                                                                                    
 """
+
+_tts_preload_lock = threading.Lock()
+_tts_preload_executor = ThreadPoolExecutor(max_workers=max(2, ((os.cpu_count() or 2) // 2) or 1))
+_tts_preloaded_jobs: dict[str, Future] = {}
+_announcement_queue: "Queue[tuple[str, str]]" = Queue()
 
 def clear_screen():
     try:
@@ -64,6 +73,63 @@ def show_banner():
     print(ASCII_LOGO)
     print(" " * 36 + "Kickertool TTS\n")
     print("-" * 100)
+
+
+def _normalize_cache_key(cache_key: str | None, text: str) -> str:
+    key = (cache_key or "").strip()
+    if key:
+        return key
+    spoken = (text or "").strip()
+    if spoken:
+        return spoken
+    return f"anon-{time.time_ns()}"
+
+
+def _preload_tts_job(cache_key: str, text: str):
+    spoken = (text or "").strip()
+    if not spoken:
+        return
+    key = _normalize_cache_key(cache_key, spoken)
+    with _tts_preload_lock:
+        future = _tts_preloaded_jobs.get(key)
+        if future and not future.done():
+            return
+        _tts_preloaded_jobs[key] = _tts_preload_executor.submit(prepare_tts_playback, spoken)
+
+
+def _take_prepared_job(cache_key: str, text: str):
+    key = _normalize_cache_key(cache_key, text)
+    future: Future | None = None
+    with _tts_preload_lock:
+        future = _tts_preloaded_jobs.pop(key, None)
+    job = None
+    if future is not None:
+        try:
+            job = future.result()
+        except Exception as exc:
+            print(f"[WARN] Vorbereiten der TTS fehlgeschlagen: {exc}")
+    if job is None:
+        job = prepare_tts_playback(text)
+    return job
+
+
+def _queue_announcement(cache_key: str, text: str):
+    spoken = (text or "").strip()
+    if not spoken:
+        return
+    _preload_tts_job(cache_key, spoken)
+    _announcement_queue.put((cache_key, spoken))
+
+
+def _make_announcement_key(tischname: str | None, match_id: str | None, team_a: str | None, team_b: str | None) -> str:
+    parts = [
+        str(match_id or f"x{time.time_ns()}"),
+        safe_slug(tischname or "tisch"),
+        safe_slug(team_a or "team_a"),
+        safe_slug(team_b or "team_b"),
+        str(time.time_ns()),
+    ]
+    return "|".join(parts)
 
 
 def _split_player_name(name: str) -> dict:
@@ -348,12 +414,12 @@ def play_notification_sound():
         print(f"[WARN] Hinweiston-Fehler: {exc}")
 
 
-def _announce_text(text: str):
+def _announce_text(cache_key: str, text: str):
     global _last_speech_finished
     spoken = (text or "").strip()
     if not spoken:
         return
-    job = prepare_tts_playback(spoken)
+    job = _take_prepared_job(cache_key, spoken)
     if job is None:
         print("[WARN] Konnte TTS nicht vorbereiten – Hinweiston übersprungen.")
         return
@@ -363,12 +429,28 @@ def _announce_text(text: str):
     print("[INFO] TTS beendet – Pause-Timer zurückgesetzt.")
 
 
+def _announcement_worker():
+    while True:
+        cache_key, text = _announcement_queue.get()
+        try:
+            _announce_text(cache_key, text)
+        except Exception as exc:
+            print(f"[WARN] TTS-Worker-Fehler: {exc}")
+        finally:
+            _announcement_queue.task_done()
+
+
+_announcement_thread = threading.Thread(target=_announcement_worker, daemon=True, name="announcement-player")
+_announcement_thread.start()
+
+
 # ==== ANKÜNDIGUNGSSYSTEM ====
 def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: str):
     spoken_text = format_spoken_text(tischname, team_a, team_b)
+    announcement_key = _make_announcement_key(tischname, match_id, team_a, team_b)
     if not write_announcement_files:
         print(spoken_text)
-        _announce_text(spoken_text)
+        _queue_announcement(announcement_key, spoken_text)
         return
 
     try:
@@ -383,7 +465,7 @@ def write_announcement_file(tischname: str, team_a: str, team_b: str, match_id: 
     except Exception as e:
         print(f"[ERROR] Konnte Ankündigungsdatei nicht schreiben: {e}")
     finally:
-        _announce_text(spoken_text)
+        _queue_announcement(announcement_key, spoken_text)
 
 def main():
     show_banner()  # Logo und CLS beim Start
