@@ -132,7 +132,7 @@ def render_ui():
         mute_state = "stumm" if _is_muted() else "an"
         print(f"Ansagen: {status} | Ton: {mute_state} | Hinweiston: {notify_state} | Queue: {len(_announcement_order)}")
         pause_label = "[P]lay" if not _is_announcements_enabled() else "[P]ause"
-        print(f"Befehle: {pause_label}, [M]ute, repla[y], [L]ogs")
+        print(f"Befehle: {pause_label}, [M]ute, [R]eplay, [L]ogs")
         print("-" * width)
         print("Anstehende Durchsagen:")
         if not _announcement_order:
@@ -592,22 +592,23 @@ def _command_listener():
         if raw == "":
             time.sleep(0.25)
             continue
-        cmd = raw.strip().lower()
-        if not cmd:
+        raw_cmd = raw.strip()
+        if not raw_cmd:
             continue
-        if cmd in ("pause", "p"):
-            if _is_announcements_enabled():
-                _set_announcements_enabled(False, "Konsole")
-            else:
-                _set_announcements_enabled(True, "Konsole")
-        elif cmd in ("mute", "m"):
+        parts = raw_cmd.split(maxsplit=1)
+        base = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+        if base in ("pause", "p"):
+            _set_announcements_enabled(not _is_announcements_enabled(), "Konsole")
+        elif base in ("mute", "m"):
             _toggle_mute("Konsole")
-        elif cmd in ("logs", "l"):
+        elif base in ("logs", "l"):
             _toggle_logs_panel()
-        elif cmd.startswith("replay"):
-            _handle_replay_command(cmd)
+        elif base in ("replay", "r"):
+            cmd_for_replay = f"replay {arg}".strip() if arg else "replay"
+            _handle_replay_command(cmd_for_replay.lower())
         else:
-            ui_log(f"Unbekannter Befehl '{cmd}'. Verfügbar: pause/resume/toggle/mute/replay/logs.")
+            ui_log(f"Unbekannter Befehl '{raw_cmd}'. Verfügbar: p, mute, replay, logs.")
 
 
 _command_thread = threading.Thread(target=_command_listener, daemon=True, name="command-listener")

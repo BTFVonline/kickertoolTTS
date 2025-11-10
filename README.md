@@ -72,7 +72,7 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 - Bei neuen Matches wird der frei konfigurierbare Text gesprochen; optional erfolgt vorher ein Hinweiston.
 - Das System bereitet jede Ansage in einem Hintergrundthread vor und reiht sie in eine Wiedergabe-Queue. Dadurch können weitere Ansagen schon während der aktuellen Ausgabe synthetisiert werden.
 - Der Hinweiston wird nur erneut abgespielt, wenn seit der letzten abgeschlossenen TTS-Ausgabe mindestens `notify_resume_after_seconds` vergangen sind. In der Konsole wird protokolliert, ob der Ton gespielt oder übersprungen wurde.
-- Über die Konsole kannst du jederzeit `p`, `mute`, `replay` oder `logs` eingeben. `p` toggelt zwischen Pause/Play, `replay` listet die letzten Durchsagen auf (mit `replay 3` bzw. `replay 2-4` kannst du einzelne oder mehrere alte Meldungen erneut einreihen), `logs` blendet den Log-Bereich ein/aus. Die Queue der nächsten Ansagen wird live eingeblendet; die aktuell gesprochene Zeile ist farblich markiert (falls das Terminal ANSI-Farben unterstützt).
+- Über die Konsole kannst du jederzeit `p`, `mute`, `replay` (oder kurz `r`) oder `logs` eingeben. `p` toggelt zwischen Pause/Play, `replay`/`r` listet die letzten Durchsagen auf (mit `replay 3`, `replay 2-4`, `r 3` usw. kannst du einzelne oder mehrere alte Meldungen erneut einreihen), `logs` blendet den Log-Bereich ein/aus. Die Queue der nächsten Ansagen wird live eingeblendet; die aktuell gesprochene Zeile ist farblich markiert (falls das Terminal ANSI-Farben unterstützt).
 - Die letzten Ansagen werden auf der Festplatte gespeichert, sodass sie nach einem Neustart weiterhin im Replay-Menü und im Dashboard sichtbar sind.
 - Sobald `write_announcement_files` aktiv ist, legt das Skript unter `data/<tournament>/announcements` eine Textdatei pro Ansage an.
 
@@ -83,7 +83,7 @@ Alle Platzhalter sind **nicht** case-sensitiv. Zusätzlich werden Varianten mit 
 | `python announcement_tts.py`            | Startet die Dauerschleife zur Match-Ansage.              |
 | `python text_to_speech.py -t "Text"`    | Liest einen beliebigen Text gemäß der TTS-Config vor.    |
 | `python announcement_tts.py --help`     | Listet optionale CLI-Parameter auf.                      |
-| `replay`, `replay 3`, `replay 1-4`      | (Im laufenden Programm) letzte Ansagen anzeigen bzw. erneut abspielen. |
+| `replay`, `replay 3`, `replay 1-4`, `r`, `r 2-4` | (Im laufenden Programm) letzte Ansagen anzeigen bzw. erneut abspielen. |
 | `p`, `mute`, `logs`                     | (Im laufenden Programm) Pause/Play toggeln, Ton stumm schalten, Log-Bereich toggeln. |
 
 ## Fehlerbehebung
