@@ -2,6 +2,10 @@
 
 Ein kleines Helferlein, das neue Matches aus der Tournament-API abholt und per Text-to-Speech (Piper oder pyttsx3) ansagt. Optional werden die Texte als Dateien gespeichert und es kann vor jeder Ansage ein Hinweiston abgespielt werden.
 
+## Demo-Video
+
+Ein kurzes Demo-Video zur Bedienung findest du als `Demo.mp4` im Projektverzeichnis.
+
 ## Voraussetzungen
 
 - Python 3.10+
