@@ -27,10 +27,8 @@ files:
 
 # Durchsagen
 announcement:
-  notify_sound: null          # Optionaler Hinweiston (WAV); null = deaktiviert
-  notify_resume_after_seconds: 30  # Wartezeit ohne TTS, bevor der Sound erneut abgespielt wird
-  enabled: true               # Ansagen beim Start aktiv? (Konsole: pause/resume)
-  mute: false                 # Ton standardmäßig an? (Konsole: mute)
-  # Liste aller Platzhalter siehe README (Abschnitt "Verfügbare Platzhalter").
-  speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
-  speech_template_doubles: "Tisch {TABLE}: {TEAM_A_PLAYER1_FULL} und {TEAM_A_PLAYER2_FULL} gegen {TEAM_B_PLAYER1_FULL} und {TEAM_B_PLAYER2_FULL}"
+  notify_sound: "notify.wav"  # Optionaler Hinweiston (WAV); leer lassen zum Deaktivieren
+  notify_resume_after_seconds: 5  # Wartezeit ohne TTS, bevor der Sound erneut abgespielt wird
+  enabled: true              # Ansagen starten aktiv
+  speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}. {PLAYER1_LASTNAME} gegen {PLAYER2_LASTNAME} Tisch {TABLE}."
+  speech_template_doubles: "Tisch {TABLE}: {TEAM_A_PLAYER1_FULL} und {TEAM_A_PLAYER2_FULL} gegen {TEAM_B_PLAYER1_FULL} und {TEAM_B_PLAYER2_FULL}. {TEAM_A_PLAYER1_SURNAME} / {TEAM_A_PLAYER2_SURNAME} gegen {TEAM_B_PLAYER1_SURNAME} / {TEAM_B_PLAYER2_SURNAME} Tisch {TABLE}"

@@ -51,7 +51,7 @@ if errorlevel 1 (
 )
 
 echo [3/6] Installing packages...
-"%VENV_DIR%\Scripts\pip.exe" install --upgrade requests piper-tts simpleaudio onnxruntime pyttsx3 pyyaml
+"%VENV_DIR%\Scripts\pip.exe" install --upgrade requests piper-tts onnxruntime pyttsx3 pyyaml
 if errorlevel 1 (
   echo [ERROR] Package installation failed.
   exit /b 1
