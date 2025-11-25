@@ -142,7 +142,7 @@ def render_ui():
                 meta = _announcement_meta.get(key)
                 if not meta:
                     continue
-                status_marker = "\u25B6" if meta.get("status") == "playing" else "\u2022"
+                status_marker = ">" if meta.get("status") == "playing" else "\u2022"
                 lines = meta["text"].splitlines() or [meta["text"]]
                 if meta.get("status") == "playing" and _UI_TTY:
                     lines = [f"\x1b[32m{line}\x1b[0m" for line in lines]
