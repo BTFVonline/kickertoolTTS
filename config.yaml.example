@@ -24,3 +24,13 @@ tts:
 files:
   save_audio: false           # WAVs dauerhaft speichern? (default: false = nur temporär)
   write_announcement_files: false  # Text-Dateien in data/<tournament>/announcements schreiben
+
+# Durchsagen
+announcement:
+  notify_sound: null          # Optionaler Hinweiston (WAV); null = deaktiviert
+  notify_resume_after_seconds: 30  # Wartezeit ohne TTS, bevor der Sound erneut abgespielt wird
+  enabled: true               # Ansagen beim Start aktiv? (Konsole: pause/resume)
+  mute: false                 # Ton standardmäßig an? (Konsole: mute)
+  # Liste aller Platzhalter siehe README (Abschnitt "Verfügbare Platzhalter").
+  speech_template: "Tisch {TABLE}: {PLAYER1_FULL} gegen {PLAYER2_FULL}"
+  speech_template_doubles: "Tisch {TABLE}: {TEAM_A_PLAYER1_FULL} und {TEAM_A_PLAYER2_FULL} gegen {TEAM_B_PLAYER1_FULL} und {TEAM_B_PLAYER2_FULL}"
