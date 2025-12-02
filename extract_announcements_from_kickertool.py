@@ -21,6 +21,54 @@ def safe_slug(s: str) -> str:
     s = re.sub(r"[^A-Za-z0-9äöüÄÖÜß\-]+", "_", s)
     return s[:64].strip("_") or "x"
 
+def _entry_to_team_name(entry):
+    """
+    Normalize a team entry from the Tournament API to a readable team name.
+    MonsterDYP liefert hier z.B. verschachtelte Listen von Spieler-Objekten,
+    waehrend klassische Formate ein Dict mit "name" enthalten.
+    """
+    if not entry:
+        return None
+
+    # Klassisches Format: {"name": "..."}
+    if isinstance(entry, dict):
+        for key in ("name", "teamName", "playerName", "displayName"):
+            value = entry.get(key)
+            if value:
+                value = str(value).strip()
+                if value:
+                    return value
+        return None
+
+    # MonsterDYP: Liste von Spielern -> Namen zusammenfassen
+    if isinstance(entry, list):
+        parts = []
+        for member in entry:
+            if isinstance(member, dict):
+                name = (
+                    member.get("name")
+                    or member.get("teamName")
+                    or member.get("playerName")
+                    or member.get("displayName")
+                )
+                if name:
+                    text = str(name).strip()
+                    if text:
+                        parts.append(text)
+            elif member is not None:
+                text = str(member).strip()
+                if text:
+                    parts.append(text)
+        if parts:
+            return " & ".join(parts)
+        return None
+
+    # Fallback: direkte String-Repraesentation
+    if isinstance(entry, str):
+        text = entry.strip()
+        return text or None
+    return str(entry)
+
 # Pfade pro Turnier in data/<tournament>/...
 BASE_DIR = Path("data") / safe_slug(tournament_id)
 output_dir = BASE_DIR / "announcements"
@@ -79,12 +127,19 @@ def extract_match_info_from_court(court_obj):
     if not isinstance(court_obj, dict):
         return None, None, None, None, False
 
-    tischname = str(court_obj.get("name", "")).strip() or None
-    current_match = court_obj.get("currentMatch") or {}
+    tischname_raw = court_obj.get("name", "")
+    tischname = str(tischname_raw).strip() or None
+
+    current_match = court_obj.get("currentMatch")
+    if not isinstance(current_match, dict):
+        return tischname, None, None, None, False
+
     match_id = current_match.get("id")
     entries = current_match.get("entries") or []
-    team_a = entries[0].get("name") if len(entries) >= 1 else None
-    team_b = entries[1].get("name") if len(entries) >= 2 else None
+    if not isinstance(entries, list):
+        entries = [entries]
+    team_a = _entry_to_team_name(entries[0]) if len(entries) >= 1 else None
+    team_b = _entry_to_team_name(entries[1]) if len(entries) >= 2 else None
 
     has_full = bool(tischname and match_id and team_a and team_b)
     return tischname, (str(match_id) if match_id else None), team_a, team_b, has_full
