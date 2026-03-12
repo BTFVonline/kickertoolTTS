@@ -128,7 +128,8 @@ def _piper_generate_audio(text: str,
         if speaker is not None:
             cmd += ["--speaker", str(speaker)]
 
-        subprocess.run(cmd, input=_normalize_text_for_tts(text).encode("ansi"), check=True)
+        encoding = "ansi" if os.name == "nt" else "utf-8"
+        subprocess.run(cmd, input=_normalize_text_for_tts(text).encode(encoding), check=True)
         if persist:
             print(f"[INFO] Audio gespeichert: {wav_path}")
         return wav_path
