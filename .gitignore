@@ -1,7 +1,14 @@
 /seen_matches.json
 /__pycache__/*
+**/__pycache__/*
+*.pyc
+*.pyo
 /announcements/*
 /voices/*
 /config.yaml
 **/seen_matches.json
 **/announcement_history.json
+CLAUDE.md
+.venv/
+.claude/
+/data/
